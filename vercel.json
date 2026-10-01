@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "functions": {
+    "api/translate.js": {
+      "runtime": "nodejs20.x"
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/translate",
+      "dest": "/api/translate.js"
+    },
+    {
+      "src": "/manifest.webmanifest",
+      "dest": "/public/manifest.webmanifest"
+    },
+    {
+      "src": "/sw.js",
+      "dest": "/public/sw.js"
+    },
+    {
+      "src": "/",
+      "dest": "/public/index.html"
+    }
+  ]
+}

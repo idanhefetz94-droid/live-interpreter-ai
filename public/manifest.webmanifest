@@ -1,0 +1,9 @@
+{
+  "name": "Live Interpreter AI",
+  "short_name": "Interpreter AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1016",
+  "theme_color": "#10131a",
+  "icons": []
+}

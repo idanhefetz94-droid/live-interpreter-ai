@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#10131a">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Live Interpreter AI</title>
+<style>
+:root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#f6f8fc;background:#0d1016}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(145deg,#0d1016,#171c28)}
+.wrap{max-width:860px;margin:auto;padding:20px}.head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{margin:0;font-size:27px}.sub{color:#9ca7bd;margin-top:5px}.pill{border:1px solid #31394e;border-radius:999px;padding:8px 11px;color:#cbd3e4;font-size:13px}
+.card{background:#171c28;border:1px solid #2d3549;border-radius:22px;padding:18px;margin-top:16px;box-shadow:0 18px 45px #0004}
+.status{font-weight:750;font-size:17px}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#707889;margin-right:8px}.on{background:#35d178}.busy{background:#ffb020}.speak{background:#6ea8ff}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:16px}
+button{border:0;border-radius:15px;padding:15px;font-size:16px;font-weight:800;cursor:pointer}
+.primary{background:#2d6df2;color:#fff}.secondary{background:#293044;color:#fff}.danger{background:#5b2530;color:white}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.box{min-height:110px;background:#10141d;border:1px solid #2c3447;border-radius:15px;padding:14px;white-space:pre-wrap}
+label{display:block;color:#abb5c9;font-size:14px;margin-top:12px}input,textarea,select{width:100%;padding:12px;border-radius:12px;border:1px solid #30384c;background:#0e121a;color:#fff;margin-top:6px}
+.small{font-size:12px;color:#8b96ab;margin-top:9px}.settings{display:none}.settings.show{display:block}
+#gate{position:fixed;inset:0;background:#0b0e14ee;display:flex;align-items:center;justify-content:center;z-index:10;padding:20px}
+.gatebox{width:min(420px,100%);background:#171c28;border:1px solid #2d3549;border-radius:22px;padding:22px}.gatebox h2{margin-top:0}
+@media(max-width:680px){.wrap{padding:13px}.grid,.controls{grid-template-columns:1fr}h1{font-size:22px}}
+</style>
+</head>
+<body>
+<div id="gate">
+  <div class="gatebox">
+    <h2>Live Interpreter AI</h2>
+    <div class="sub">Enter access PIN</div>
+    <input id="pin" inputmode="numeric" autocomplete="one-time-code" placeholder="PIN">
+    <button id="enterBtn" class="primary" style="width:100%;margin-top:12px">Enter</button>
+    <div id="gateMsg" class="small"></div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="head">
+    <div><h1>Live Interpreter AI</h1><div class="sub">Presentation interpreter • English → Spanish</div></div>
+    <div class="pill">AI translation</div>
+  </div>
+
+  <div class="card">
+    <div class="status"><span id="dot" class="dot"></span><span id="status">Ready</span></div>
+    <div class="controls">
+      <button id="startBtn" class="primary">🎙 Start listening</button>
+      <button id="translateBtn" class="secondary">Translate now</button>
+    </div>
+    <div class="small">Say <b id="cmdLabel">“Translate”</b> to translate what you said before the command.</div>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div><label>What I heard</label><div id="sourceBox" class="box">—</div></div>
+      <div><label>Translation</label><div id="translationBox" class="box">—</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <button id="settingsBtn" class="secondary" style="width:100%">⚙ Settings</button>
+    <div id="settings" class="settings">
+      <div class="grid">
+        <div><label>Source language</label><select id="sourceLang"><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="es-ES">Spanish</option><option value="he-IL">Hebrew</option></select></div>
+        <div><label>Target language</label><select id="targetLang"><option>Spanish</option><option>English</option><option>Hebrew</option><option>French</option><option>Portuguese</option></select></div>
+      </div>
+      <label>Voice command</label><input id="commandWord" value="Translate">
+      <label>Presentation context</label><textarea id="context" rows="3" placeholder="Example: defense-industry sales presentation"></textarea>
+      <label>Glossary — one term per line</label><textarea id="glossary" rows="5" placeholder="lead time = plazo de entrega&#10;plate carrier = portaplacas"></textarea>
+      <button id="saveBtn" class="primary" style="width:100%;margin-top:13px">Save settings</button>
+    </div>
+  </div>
+
+  <div class="small">The translated voice is AI-assisted. Audio playback follows the phone/computer's active output, including Bluetooth speakers.</div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let accessPin=sessionStorage.getItem("lia_pin")||"";
+const defaults={sourceLang:"en-US",targetLang:"Spanish",commandWord:"Translate",context:"",glossary:""};
+const settings=Object.assign({},defaults,JSON.parse(localStorage.getItem("lia_settings")||"{}"));
+for(const k of Object.keys(defaults)){if($(k))$(k).value=settings[k]}
+$("cmdLabel").textContent='“'+settings.commandWord+'”';
+
+$("enterBtn").onclick=()=>{accessPin=$("pin").value.trim(); if(!accessPin){$("gateMsg").textContent="Enter PIN";return;} sessionStorage.setItem("lia_pin",accessPin); $("gate").style.display="none";};
+$("pin").addEventListener("keydown",e=>{if(e.key==="Enter")$("enterBtn").click()});
+if(accessPin)$("gate").style.display="none";
+
+function setStatus(t,c=""){ $("status").textContent=t; $("dot").className="dot "+c; }
+$("settingsBtn").onclick=()=> $("settings").classList.toggle("show");
+$("saveBtn").onclick=()=>{for(const k of Object.keys(defaults))settings[k]=$(k).value.trim();localStorage.setItem("lia_settings",JSON.stringify(settings));$("cmdLabel").textContent='“'+settings.commandWord+'”';$("settings").classList.remove("show");setStatus("Settings saved")};
+
+const state={rec:null,listening:false,buffer:"",speaking:false};
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(!SR){setStatus("Use Chrome or Edge for speech recognition");$("startBtn").disabled=true}
+else{
+ const rec=new SR();state.rec=rec;rec.continuous=true;rec.interimResults=true;rec.lang=settings.sourceLang;
+ rec.onstart=()=>{state.listening=true;setStatus("Listening…","on");$("startBtn").textContent="⏹ Stop listening"};
+ rec.onend=()=>{state.listening=false;if(!state.speaking){setStatus("Ready");$("startBtn").textContent="🎙 Start listening"}};
+ rec.onerror=e=>setStatus("Microphone error: "+e.error);
+ rec.onresult=e=>{
+   let interim="";
+   for(let i=e.resultIndex;i<e.results.length;i++){
+     const t=e.results[i][0].transcript.trim();
+     if(e.results[i].isFinal){
+       const cmd=settings.commandWord.toLowerCase();
+       const low=t.toLowerCase();
+       const idx=low.indexOf(cmd);
+       if(idx>=0){
+         const before=t.slice(0,idx).trim();
+         if(before)state.buffer=(state.buffer+" "+before).trim();
+         const txt=state.buffer.trim();state.buffer="";
+         $("sourceBox").textContent=txt||"—";
+         if(txt)translateText(txt);
+       }else{
+         state.buffer=(state.buffer+" "+t).trim();
+         $("sourceBox").textContent=state.buffer;
+       }
+     }else interim=t;
+   }
+   if(interim&&state.buffer)$("sourceBox").textContent=state.buffer+" "+interim;
+ };
+}
+
+$("startBtn").onclick=()=>{if(!state.rec)return;state.rec.lang=settings.sourceLang;if(state.listening)state.rec.stop();else{state.buffer="";$("sourceBox").textContent="—";$("translationBox").textContent="—";state.rec.start()}};
+$("translateBtn").onclick=()=>{const t=(state.buffer.trim()||$("sourceBox").textContent.trim());if(t&&t!=="—")translateText(t)};
+
+async function translateText(text){
+ try{
+   if(state.listening)state.rec.stop();
+   setStatus("Translating…","busy");
+   const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json","x-app-pin":accessPin},body:JSON.stringify({text,targetLanguage:settings.targetLang,context:settings.context,glossary:settings.glossary})});
+   const j=await r.json();
+   if(r.status===401){sessionStorage.removeItem("lia_pin");$("gate").style.display="flex";$("gateMsg").textContent="Incorrect PIN";throw new Error("Incorrect PIN")}
+   if(!r.ok)throw new Error(j.error||"Translation failed");
+   $("translationBox").textContent=j.translation;
+   state.speaking=true;setStatus("Speaking…","speak");speak(j.translation);
+ }catch(e){setStatus(e.message||"Translation failed")}
+}
+function speak(text){
+ speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);
+ const map={Spanish:"es-ES",English:"en-US",Hebrew:"he-IL",French:"fr-FR",Portuguese:"pt-BR"};
+ u.lang=map[settings.targetLang]||"es-ES";
+ const vs=speechSynthesis.getVoices();const v=vs.find(x=>x.lang.toLowerCase().startsWith(u.lang.slice(0,2).toLowerCase()));if(v)u.voice=v;
+ u.rate=.98;u.onend=()=>{state.speaking=false;setStatus("Ready");if(state.rec)setTimeout(()=>{try{state.rec.start()}catch{}},400)};u.onerror=()=>{state.speaking=false;setStatus("Voice playback error")};speechSynthesis.speak(u);
+}
+if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+</script>
+</body>
+</html>
