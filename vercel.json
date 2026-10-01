@@ -1,10 +1,6 @@
 {
   "version": 2,
-  "functions": {
-    "api/translate.js": {
-      "runtime": "nodejs20.x"
-    }
-  },
+
   "routes": [
     {
       "src": "/api/translate",
