@@ -12,14 +12,15 @@
 .wrap{max-width:860px;margin:auto;padding:20px}.head{display:flex;justify-content:space-between;align-items:center;gap:12px}
 h1{margin:0;font-size:27px}.sub{color:#9ca7bd;margin-top:5px}.pill{border:1px solid #31394e;border-radius:999px;padding:8px 11px;color:#cbd3e4;font-size:13px}
 .card{background:#171c28;border:1px solid #2d3549;border-radius:22px;padding:18px;margin-top:16px;box-shadow:0 18px 45px #0004}
-.status{font-weight:750;font-size:17px}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#707889;margin-right:8px}.on{background:#35d178}.busy{background:#ffb020}.speak{background:#6ea8ff}
+.status{font-weight:750;font-size:17px}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#707889;margin-right:8px}
+.on{background:#35d178}.busy{background:#ffb020}.speak{background:#6ea8ff}.err{background:#ff6278}
 .controls{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:16px}
 button{border:0;border-radius:15px;padding:15px;font-size:16px;font-weight:800;cursor:pointer}
-.primary{background:#2d6df2;color:#fff}.secondary{background:#293044;color:#fff}.danger{background:#5b2530;color:white}
+button:disabled{opacity:.55;cursor:not-allowed}.primary{background:#2d6df2;color:#fff}.secondary{background:#293044;color:#fff}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.box{min-height:110px;background:#10141d;border:1px solid #2c3447;border-radius:15px;padding:14px;white-space:pre-wrap}
 label{display:block;color:#abb5c9;font-size:14px;margin-top:12px}input,textarea,select{width:100%;padding:12px;border-radius:12px;border:1px solid #30384c;background:#0e121a;color:#fff;margin-top:6px}
 .small{font-size:12px;color:#8b96ab;margin-top:9px}.settings{display:none}.settings.show{display:block}
-#gate{position:fixed;inset:0;background:#0b0e14ee;display:flex;align-items:center;justify-content:center;z-index:10;padding:20px}
+#gate{position:fixed;inset:0;background:#0b0e14f2;display:flex;align-items:center;justify-content:center;z-index:10;padding:20px}
 .gatebox{width:min(420px,100%);background:#171c28;border:1px solid #2d3549;border-radius:22px;padding:22px}.gatebox h2{margin-top:0}
 @media(max-width:680px){.wrap{padding:13px}.grid,.controls{grid-template-columns:1fr}h1{font-size:22px}}
 </style>
@@ -47,7 +48,7 @@ label{display:block;color:#abb5c9;font-size:14px;margin-top:12px}input,textarea,
       <button id="startBtn" class="primary">🎙 Start listening</button>
       <button id="translateBtn" class="secondary">Translate now</button>
     </div>
-    <div class="small">Say <b id="cmdLabel">“Translate”</b> to translate what you said before the command.</div>
+    <div class="small">Say <b id="cmdLabel">“Translate”</b> or tap <b>Translate now</b>. The app resumes listening automatically after speaking.</div>
   </div>
 
   <div class="card">
@@ -65,86 +66,227 @@ label{display:block;color:#abb5c9;font-size:14px;margin-top:12px}input,textarea,
         <div><label>Target language</label><select id="targetLang"><option>Spanish</option><option>English</option><option>Hebrew</option><option>French</option><option>Portuguese</option></select></div>
       </div>
       <label>Voice command</label><input id="commandWord" value="Translate">
-      <label>Presentation context</label><textarea id="context" rows="3" placeholder="Example: defense-industry sales presentation"></textarea>
-      <label>Glossary — one term per line</label><textarea id="glossary" rows="5" placeholder="lead time = plazo de entrega&#10;plate carrier = portaplacas"></textarea>
+      <label>Presentation context</label><textarea id="context" rows="3" placeholder="Example: professional sales presentation"></textarea>
+      <label>Glossary — one term per line</label><textarea id="glossary" rows="5" placeholder="lead time = plazo de entrega"></textarea>
       <button id="saveBtn" class="primary" style="width:100%;margin-top:13px">Save settings</button>
     </div>
   </div>
 
-  <div class="small">The translated voice is AI-assisted. Audio playback follows the phone/computer's active output, including Bluetooth speakers.</div>
+  <div class="small">The translated voice is AI-assisted. Audio playback follows the device's active output, including Bluetooth speakers.</div>
 </div>
 
 <script>
 const $=id=>document.getElementById(id);
-let accessPin=sessionStorage.getItem("lia_pin")||"";
 const defaults={sourceLang:"en-US",targetLang:"Spanish",commandWord:"Translate",context:"",glossary:""};
 const settings=Object.assign({},defaults,JSON.parse(localStorage.getItem("lia_settings")||"{}"));
 for(const k of Object.keys(defaults)){if($(k))$(k).value=settings[k]}
 $("cmdLabel").textContent='“'+settings.commandWord+'”';
 
-$("enterBtn").onclick=()=>{accessPin=$("pin").value.trim(); if(!accessPin){$("gateMsg").textContent="Enter PIN";return;} sessionStorage.setItem("lia_pin",accessPin); $("gate").style.display="none";};
-$("pin").addEventListener("keydown",e=>{if(e.key==="Enter")$("enterBtn").click()});
-if(accessPin)$("gate").style.display="none";
+let accessPin=localStorage.getItem("lia_pin")||"";
+const state={
+  rec:null,listening:false,shouldListen:false,buffer:"",interim:"",
+  speaking:false,processing:false,triggered:false
+};
 
 function setStatus(t,c=""){ $("status").textContent=t; $("dot").className="dot "+c; }
+function setBusy(v){ $("translateBtn").disabled=v; $("startBtn").disabled=v && !state.listening; }
+function currentText(){ return [state.buffer,state.interim].filter(Boolean).join(" ").replace(/\s+/g," ").trim(); }
+function renderTranscript(){ $("sourceBox").textContent=currentText()||"—"; }
+function showGate(msg=""){ $("gate").style.display="flex"; $("gateMsg").textContent=msg; $("pin").focus(); }
+function hideGate(){ $("gate").style.display="none"; $("gateMsg").textContent=""; }
+
+async function verifyPin(pin){
+  const r=await fetch("/api/auth",{method:"POST",headers:{"Content-Type":"application/json","x-app-pin":pin}});
+  return r.ok;
+}
+
+$("enterBtn").onclick=async()=>{
+  const pin=$("pin").value.trim();
+  if(!pin){$("gateMsg").textContent="Enter PIN";return}
+  $("enterBtn").disabled=true;$("gateMsg").textContent="Checking…";
+  try{
+    if(await verifyPin(pin)){
+      accessPin=pin;localStorage.setItem("lia_pin",pin);hideGate();setStatus("Ready");
+    }else{
+      localStorage.removeItem("lia_pin");accessPin="";$("gateMsg").textContent="Incorrect PIN";
+    }
+  }catch{
+    $("gateMsg").textContent="Connection error. Try again.";
+  }finally{$("enterBtn").disabled=false}
+};
+$("pin").addEventListener("keydown",e=>{if(e.key==="Enter")$("enterBtn").click()});
+
+(async()=>{
+  if(!accessPin){showGate();return}
+  try{
+    if(await verifyPin(accessPin)){hideGate()}
+    else{localStorage.removeItem("lia_pin");accessPin="";showGate("PIN changed. Enter it again.")}
+  }catch{showGate("Connection error. Try again.")}
+})();
+
 $("settingsBtn").onclick=()=> $("settings").classList.toggle("show");
-$("saveBtn").onclick=()=>{for(const k of Object.keys(defaults))settings[k]=$(k).value.trim();localStorage.setItem("lia_settings",JSON.stringify(settings));$("cmdLabel").textContent='“'+settings.commandWord+'”';$("settings").classList.remove("show");setStatus("Settings saved")};
+$("saveBtn").onclick=()=>{
+  for(const k of Object.keys(defaults))settings[k]=$(k).value.trim();
+  localStorage.setItem("lia_settings",JSON.stringify(settings));
+  $("cmdLabel").textContent='“'+settings.commandWord+'”';
+  $("settings").classList.remove("show");
+  if(state.rec)state.rec.lang=settings.sourceLang;
+  setStatus("Settings saved");
+};
 
-const state={rec:null,listening:false,buffer:"",speaking:false};
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-if(!SR){setStatus("Use Chrome or Edge for speech recognition");$("startBtn").disabled=true}
-else{
- const rec=new SR();state.rec=rec;rec.continuous=true;rec.interimResults=true;rec.lang=settings.sourceLang;
- rec.onstart=()=>{state.listening=true;setStatus("Listening…","on");$("startBtn").textContent="⏹ Stop listening"};
- rec.onend=()=>{state.listening=false;if(!state.speaking){setStatus("Ready");$("startBtn").textContent="🎙 Start listening"}};
- rec.onerror=e=>setStatus("Microphone error: "+e.error);
- rec.onresult=e=>{
-   let interim="";
-   for(let i=e.resultIndex;i<e.results.length;i++){
-     const t=e.results[i][0].transcript.trim();
-     if(e.results[i].isFinal){
-       const cmd=settings.commandWord.toLowerCase();
-       const low=t.toLowerCase();
-       const idx=low.indexOf(cmd);
-       if(idx>=0){
-         const before=t.slice(0,idx).trim();
-         if(before)state.buffer=(state.buffer+" "+before).trim();
-         const txt=state.buffer.trim();state.buffer="";
-         $("sourceBox").textContent=txt||"—";
-         if(txt)translateText(txt);
-       }else{
-         state.buffer=(state.buffer+" "+t).trim();
-         $("sourceBox").textContent=state.buffer;
-       }
-     }else interim=t;
-   }
-   if(interim&&state.buffer)$("sourceBox").textContent=state.buffer+" "+interim;
- };
+if(!SR){
+  setStatus("Speech recognition is not supported in this browser","err");
+  $("startBtn").disabled=true;
+}else{
+  const rec=new SR();state.rec=rec;rec.continuous=true;rec.interimResults=true;rec.lang=settings.sourceLang;
+
+  rec.onstart=()=>{
+    state.listening=true;state.triggered=false;
+    setStatus("Listening…","on");
+    $("startBtn").textContent="⏹ Stop listening";
+  };
+
+  rec.onend=()=>{
+    state.listening=false;
+    $("startBtn").textContent="🎙 Start listening";
+    if(!state.processing&&!state.speaking){
+      if(state.shouldListen){
+        setTimeout(()=>{try{rec.start()}catch{}},250);
+      }else setStatus("Ready");
+    }
+  };
+
+  rec.onerror=e=>{
+    state.listening=false;
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+      state.shouldListen=false;
+      setStatus("Microphone permission blocked","err");
+    }else if(e.error!=="aborted"){
+      setStatus("Microphone error: "+e.error,"err");
+    }
+  };
+
+  rec.onresult=e=>{
+    let interimParts=[];
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const t=e.results[i][0].transcript.trim();
+      if(!t)continue;
+
+      if(e.results[i].isFinal){
+        const cmd=settings.commandWord.toLowerCase();
+        const low=t.toLowerCase();
+        const idx=low.indexOf(cmd);
+
+        if(idx>=0){
+          const before=t.slice(0,idx).trim();
+          if(before)state.buffer=(state.buffer+" "+before).trim();
+          state.interim="";
+          renderTranscript();
+          const text=state.buffer.trim();
+          state.buffer="";
+          if(text&&!state.triggered)triggerTranslation(text);
+          return;
+        }else{
+          state.buffer=(state.buffer+" "+t).trim();
+        }
+      }else{
+        interimParts.push(t);
+      }
+    }
+
+    state.interim=interimParts.join(" ").trim();
+    renderTranscript();
+
+    // Faster command detection: do not wait for the browser to mark the command final.
+    if(state.interim&&!state.triggered){
+      const cmd=settings.commandWord.toLowerCase();
+      const low=state.interim.toLowerCase();
+      const idx=low.indexOf(cmd);
+      if(idx>=0){
+        const before=state.interim.slice(0,idx).trim();
+        const text=[state.buffer,before].filter(Boolean).join(" ").replace(/\s+/g," ").trim();
+        state.buffer="";state.interim="";
+        $("sourceBox").textContent=text||"—";
+        if(text)triggerTranslation(text);
+      }
+    }
+  };
 }
 
-$("startBtn").onclick=()=>{if(!state.rec)return;state.rec.lang=settings.sourceLang;if(state.listening)state.rec.stop();else{state.buffer="";$("sourceBox").textContent="—";$("translationBox").textContent="—";state.rec.start()}};
-$("translateBtn").onclick=()=>{const t=(state.buffer.trim()||$("sourceBox").textContent.trim());if(t&&t!=="—")translateText(t)};
-
-async function translateText(text){
- try{
-   if(state.listening)state.rec.stop();
-   setStatus("Translating…","busy");
-   const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json","x-app-pin":accessPin},body:JSON.stringify({text,targetLanguage:settings.targetLang,context:settings.context,glossary:settings.glossary})});
-   const j=await r.json();
-   if(r.status===401){sessionStorage.removeItem("lia_pin");$("gate").style.display="flex";$("gateMsg").textContent="Incorrect PIN";throw new Error("Incorrect PIN")}
-   if(!r.ok)throw new Error(j.error||"Translation failed");
-   $("translationBox").textContent=j.translation;
-   state.speaking=true;setStatus("Speaking…","speak");speak(j.translation);
- }catch(e){setStatus(e.message||"Translation failed")}
+function startListening(){
+  if(!state.rec||state.processing||state.speaking)return;
+  state.shouldListen=true;state.triggered=false;state.buffer="";state.interim="";
+  $("sourceBox").textContent="—";$("translationBox").textContent="—";
+  state.rec.lang=settings.sourceLang;
+  try{state.rec.start()}catch{}
 }
+function stopListening(){
+  state.shouldListen=false;
+  if(state.rec&&state.listening){try{state.rec.stop()}catch{}}
+  else setStatus("Ready");
+}
+$("startBtn").onclick=()=> state.shouldListen?stopListening():startListening();
+
+$("translateBtn").onclick=()=>{
+  const text=currentText()||($("sourceBox").textContent==="—"?"":$("sourceBox").textContent.trim());
+  if(text)triggerTranslation(text);
+  else setStatus("Nothing to translate yet","err");
+};
+
+async function triggerTranslation(text){
+  if(state.processing||!text)return;
+  state.triggered=true;state.processing=true;setBusy(true);
+  $("sourceBox").textContent=text;
+  if(state.rec&&state.listening){try{state.rec.stop()}catch{}}
+  setStatus("Translating…","busy");
+
+  try{
+    const r=await fetch("/api/translate",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-app-pin":accessPin},
+      body:JSON.stringify({text,targetLanguage:settings.targetLang,context:settings.context,glossary:settings.glossary})
+    });
+
+    const j=await r.json().catch(()=>({}));
+    if(r.status===401){
+      localStorage.removeItem("lia_pin");accessPin="";state.shouldListen=false;
+      showGate("PIN expired or changed. Enter it again.");
+      throw new Error("Access PIN required");
+    }
+    if(!r.ok)throw new Error(j.error||"Translation failed");
+
+    $("translationBox").textContent=j.translation;
+    state.processing=false;setBusy(false);
+    speak(j.translation);
+  }catch(e){
+    state.processing=false;state.triggered=false;setBusy(false);
+    if(!$("gate").style.display||$("gate").style.display==="none")setStatus(e.message||"Translation failed","err");
+  }
+}
+
 function speak(text){
- speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);
- const map={Spanish:"es-ES",English:"en-US",Hebrew:"he-IL",French:"fr-FR",Portuguese:"pt-BR"};
- u.lang=map[settings.targetLang]||"es-ES";
- const vs=speechSynthesis.getVoices();const v=vs.find(x=>x.lang.toLowerCase().startsWith(u.lang.slice(0,2).toLowerCase()));if(v)u.voice=v;
- u.rate=.98;u.onend=()=>{state.speaking=false;setStatus("Ready");if(state.rec)setTimeout(()=>{try{state.rec.start()}catch{}},400)};u.onerror=()=>{state.speaking=false;setStatus("Voice playback error")};speechSynthesis.speak(u);
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  const map={Spanish:"es-ES",English:"en-US",Hebrew:"he-IL",French:"fr-FR",Portuguese:"pt-BR"};
+  u.lang=map[settings.targetLang]||"es-ES";
+  const voices=speechSynthesis.getVoices();
+  const v=voices.find(x=>x.lang.toLowerCase().startsWith(u.lang.slice(0,2).toLowerCase()));
+  if(v)u.voice=v;
+  u.rate=.98;
+  state.speaking=true;setStatus("Speaking…","speak");
+  u.onend=()=>{
+    state.speaking=false;state.triggered=false;
+    if(state.shouldListen&&state.rec){
+      setStatus("Resuming…","busy");
+      setTimeout(()=>{try{state.rec.start()}catch{setStatus("Tap Start listening","err")}},350);
+    }else setStatus("Ready");
+  };
+  u.onerror=()=>{state.speaking=false;state.triggered=false;setStatus("Voice playback error","err")};
+  speechSynthesis.speak(u);
 }
-if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+
+if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js?v=2").catch(()=>{});
 </script>
 </body>
 </html>
